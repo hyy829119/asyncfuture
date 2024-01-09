@@ -1,25 +1,32 @@
 /* AsyncFuture Version: 0.4.1 */
 #pragma once
+#include <QCoreApplication>
 #include <QFuture>
+#include <QFutureWatcher>
 #include <QMetaMethod>
+#include <QMutex>
 #include <QPointer>
 #include <QThread>
-#include <QFutureWatcher>
-#include <QCoreApplication>
-#include <QMutex>
+#include <QRegularExpression>
 #include <functional>
 
-#define ASYNCFUTURE_ERROR_OBSERVE_VOID_WITH_ARGUMENT "Observe a QFuture<void> but your callback contains an input argument"
-#define ASYNCFUTURE_ERROR_CALLBACK_NO_MORE_ONE_ARGUMENT "Callback function should not take more than 1 argument"
-#define ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED "The callback function is not callable. The input argument doesn't match with the observing QFuture type"
+#define ASYNCFUTURE_ERROR_OBSERVE_VOID_WITH_ARGUMENT \
+    "Observe a QFuture<void> but your callback contains an input argument"
+#define ASYNCFUTURE_ERROR_CALLBACK_NO_MORE_ONE_ARGUMENT \
+    "Callback function should not take more than 1 argument"
+#define ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED \
+    "The callback function is not callable. The input argument doesn't match with the observing " \
+    "QFuture type"
 
 #define ASYNC_FUTURE_CALLBACK_STATIC_ASSERT(Tag, Completed) \
-    static_assert(Private::arg_count<Completed>::value <= 1, Tag ASYNCFUTURE_ERROR_CALLBACK_NO_MORE_ONE_ARGUMENT); \
-    static_assert(!(std::is_same<void, T>::value && Private::arg_count<Completed>::value >= 1), Tag ASYNCFUTURE_ERROR_OBSERVE_VOID_WITH_ARGUMENT); \
-    static_assert( Private::decay_is_same<T, Private::Arg0Type<Completed>>::value || \
-                   Private::arg0_is_future<Completed>::value || \
-                   std::is_same<void, Private::Arg0Type<Completed>>::value, Tag ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED);
-
+    static_assert(Private::arg_count<Completed>::value <= 1, \
+                  Tag ASYNCFUTURE_ERROR_CALLBACK_NO_MORE_ONE_ARGUMENT); \
+    static_assert(!(std::is_same<void, T>::value && Private::arg_count<Completed>::value >= 1), \
+                  Tag ASYNCFUTURE_ERROR_OBSERVE_VOID_WITH_ARGUMENT); \
+    static_assert(Private::decay_is_same<T, Private::Arg0Type<Completed>>::value \
+                      || Private::arg0_is_future<Completed>::value \
+                      || std::is_same<void, Private::Arg0Type<Completed>>::value, \
+                  Tag ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED);
 
 namespace AsyncFuture {
 
@@ -34,46 +41,41 @@ namespace Private {
 /* Begin traits functions */
 
 // Determine is the input type a QFuture
-template <typename T>
-struct future_traits {
-    enum {
-        is_future = 0
-    };
-
-    typedef void arg_type;
-};
-
-template <template <typename> class C, typename T>
-struct future_traits<C <T> >
+template<typename T>
+struct future_traits
 {
-    enum {
-        is_future = 0
-    };
+    enum { is_future = 0 };
 
     typedef void arg_type;
 };
 
-template <typename T>
-struct future_traits<QFuture<QFuture<T>>> : public future_traits<QFuture<T>> {
+template<template<typename> class C, typename T>
+struct future_traits<C<T>>
+{
+    enum { is_future = 0 };
+
+    typedef void arg_type;
 };
 
-template <typename T>
-struct future_traits<QFuture<T> >{
-    enum {
-        is_future = 1
-    };
+template<typename T>
+struct future_traits<QFuture<QFuture<T>>> : public future_traits<QFuture<T>>
+{};
+
+template<typename T>
+struct future_traits<QFuture<T>>
+{
+    enum { is_future = 1 };
     typedef T arg_type;
 };
 
 // function_traits: Source: http://stackoverflow.com/questions/7943525/is-it-possible-to-figure-out-the-parameter-type-and-return-type-of-a-lambda
 
-template <typename T>
-struct function_traits
-        : public function_traits<decltype(&T::operator())>
+template<typename T>
+struct function_traits : public function_traits<decltype(&T::operator())>
 {};
 
-template <typename ClassType, typename ReturnType, typename... Args>
-struct function_traits<ReturnType(ClassType::*)(Args...) const>
+template<typename ClassType, typename ReturnType, typename... Args>
+struct function_traits<ReturnType (ClassType::*)(Args...) const>
 // we specialize for pointers to member function
 {
     enum { arity = sizeof...(Args) };
@@ -81,14 +83,12 @@ struct function_traits<ReturnType(ClassType::*)(Args...) const>
 
     typedef ReturnType result_type;
 
-    enum {
-        result_type_is_future = future_traits<result_type>::is_future
-    };
+    enum { result_type_is_future = future_traits<result_type>::is_future };
 
     // If the result_type is a QFuture<T>, the type will be T. Otherwise, it is void
     typedef typename future_traits<result_type>::arg_type future_arg_type;
 
-    template <size_t i>
+    template<size_t i>
     struct arg
     {
         typedef typename std::tuple_element<i, std::tuple<Args...>>::type type;
@@ -99,8 +99,8 @@ struct function_traits<ReturnType(ClassType::*)(Args...) const>
 
 /* It is an additional to the original function_traits to handle non-const function (with mutable keyword lambda). */
 
-template <typename ClassType, typename ReturnType, typename... Args>
-struct function_traits<ReturnType(ClassType::*)(Args...)>
+template<typename ClassType, typename ReturnType, typename... Args>
+struct function_traits<ReturnType (ClassType::*)(Args...)>
 // we specialize for pointers to member function
 {
     enum { arity = sizeof...(Args) };
@@ -108,14 +108,12 @@ struct function_traits<ReturnType(ClassType::*)(Args...)>
 
     typedef ReturnType result_type;
 
-    enum {
-        result_type_is_future = future_traits<result_type>::is_future
-    };
+    enum { result_type_is_future = future_traits<result_type>::is_future };
 
     // If the result_type is a QFuture<T>, the type will be T. Otherwise, it is void
     typedef typename future_traits<result_type>::arg_type future_arg_type;
 
-    template <size_t i>
+    template<size_t i>
     struct arg
     {
         typedef typename std::tuple_element<i, std::tuple<Args...>>::type type;
@@ -125,208 +123,213 @@ struct function_traits<ReturnType(ClassType::*)(Args...)>
 };
 
 /// Decay 2nd parameter and check is it same as the first argument
-template <typename T, typename U>
-struct decay_is_same :
-    std::is_same<T, typename std::decay<U>::type>::type
+template<typename T, typename U>
+struct decay_is_same : std::is_same<T, typename std::decay<U>::type>::type
 {};
 
-template <typename T>
-struct signal_traits {
+template<typename T>
+struct signal_traits
+{
     // Match class member function only
 };
 
-template <typename R, typename C>
-struct signal_traits<R (C::*)()> {
+template<typename R, typename C>
+struct signal_traits<R (C::*)()>
+{
     typedef void result_type;
 };
 
-template <typename R, typename C, typename ARG0>
-struct signal_traits<R (C::*)(ARG0)> {
+template<typename R, typename C, typename ARG0>
+struct signal_traits<R (C::*)(ARG0)>
+{
     typedef ARG0 result_type;
 };
 
-template <typename T>
-struct arg0_traits : public arg0_traits<decltype(&T::operator())> {
-};
+template<typename T>
+struct arg0_traits : public arg0_traits<decltype(&T::operator())>
+{};
 
-template <typename C, typename R>
-struct arg0_traits<R(C::*)() const> {
+template<typename C, typename R>
+struct arg0_traits<R (C::*)() const>
+{
     typedef void type;
 };
 
-template <typename C, typename R>
-struct arg0_traits<R(C::*)()> {
+template<typename C, typename R>
+struct arg0_traits<R (C::*)()>
+{
     typedef void type;
 };
 
-template <typename C, typename R, typename Arg0, typename ...Args>
-struct arg0_traits<R(C::*)(Arg0, Args...) const> {
+template<typename C, typename R, typename Arg0, typename... Args>
+struct arg0_traits<R (C::*)(Arg0, Args...) const>
+{
     typedef Arg0 type;
 };
 
-template <typename C, typename R, typename Arg0, typename ...Args>
-struct arg0_traits<R(C::*)(Arg0, Args...)> {
+template<typename C, typename R, typename Arg0, typename... Args>
+struct arg0_traits<R (C::*)(Arg0, Args...)>
+{
     typedef Arg0 type;
 };
-    
-template <typename R>
-struct arg0_traits<R()> {
-  typedef void type;
+
+template<typename R>
+struct arg0_traits<R()>
+{
+    typedef void type;
 };
 
-template <typename R, typename Arg0, typename ...Args>
-struct arg0_traits<R(Arg0, Args...)> {
-  typedef Arg0 type;
+template<typename R, typename Arg0, typename... Args>
+struct arg0_traits<R(Arg0, Args...)>
+{
+    typedef Arg0 type;
 };
 
 // Obtain the observable type according to the Functor
-template <typename T>
-struct observable_traits: public observable_traits<decltype(&T::operator())> {
-};
+template<typename T>
+struct observable_traits : public observable_traits<decltype(&T::operator())>
+{};
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<QFuture<QFuture<R>>(C::*)(Args...) const> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<QFuture<QFuture<R>> (C::*)(Args...) const>
+{
     typedef R type;
 };
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<QFuture<QFuture<R>>(C::*)(Args...)> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<QFuture<QFuture<R>> (C::*)(Args...)>
+{
     typedef R type;
 };
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<QFuture<R>(C::*)(Args...) const> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<QFuture<R> (C::*)(Args...) const>
+{
     typedef R type;
 };
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<QFuture<R>(C::*)(Args...)> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<QFuture<R> (C::*)(Args...)>
+{
     typedef R type;
 };
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<R(C::*)(Args...) const> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<R (C::*)(Args...) const>
+{
     typedef R type;
 };
 
-template <typename C, typename R, typename ...Args>
-struct observable_traits<R(C::*)(Args...)> {
+template<typename C, typename R, typename... Args>
+struct observable_traits<R (C::*)(Args...)>
+{
     typedef R type;
 };
 
-template <typename Functor>
+template<typename Functor>
 using RetType = typename function_traits<Functor>::result_type;
 
-template <typename Functor>
+template<typename Functor>
 using Arg0Type = typename arg0_traits<Functor>::type;
 
-template <typename Functor>
-struct ret_type_is_void {
-    enum {
-        value = std::is_same<RetType<Functor>, void>::value
-    };
+template<typename Functor>
+struct ret_type_is_void
+{
+    enum { value = std::is_same<RetType<Functor>, void>::value };
 };
 
-template <typename Functor>
-struct ret_type_is_future {
-    enum {
-        value = future_traits<RetType<Functor>>::is_future
-    };
+template<typename Functor>
+struct ret_type_is_future
+{
+    enum { value = future_traits<RetType<Functor>>::is_future };
 };
 
-template <typename Functor>
-struct arg0_is_future {
-    enum {
-        value = future_traits<typename std::decay<Arg0Type<Functor>>::type>::is_future
-    };
+template<typename Functor>
+struct arg0_is_future
+{
+    enum { value = future_traits<typename std::decay<Arg0Type<Functor>>::type>::is_future };
 };
 
-template <typename Functor>
-struct arg_count_is_zero {
-    enum {
-        value = (function_traits<Functor>::arity == 0)
-    };
+template<typename Functor>
+struct arg_count_is_zero
+{
+    enum { value = (function_traits<Functor>::arity == 0) };
 };
 
-template <typename Functor>
-struct arg_count_is_not_zero {
-    enum {
-        value = (function_traits<Functor>::arity > 0)
-    };
+template<typename Functor>
+struct arg_count_is_not_zero
+{
+    enum { value = (function_traits<Functor>::arity > 0) };
 };
 
-template <typename Functor>
-struct arg_count_is_one {
-    enum {
-        value = (function_traits<Functor>::arity == 1)
-    };
+template<typename Functor>
+struct arg_count_is_one
+{
+    enum { value = (function_traits<Functor>::arity == 1) };
 };
 
-template <typename Functor>
-struct arg_count {
-    enum {
-        value = function_traits<Functor>::arity
-    };
+template<typename Functor>
+struct arg_count
+{
+    enum { value = function_traits<Functor>::arity };
 };
-
 
 template<typename T>
-struct False : std::false_type {
-};
+struct False : std::false_type
+{};
 
-template< typename Functor, typename T>
-struct is_callable {
+template<typename Functor, typename T>
+struct is_callable
+{
     enum {
-        value = (arg_count<Functor>::value == 1) &&
-                (!std::is_same<void, T>::value) &&
-                (std::is_convertible<Arg0Type<Functor>, T>::value)
+        value = (arg_count<Functor>::value == 1) && (!std::is_same<void, T>::value)
+                && (std::is_convertible<Arg0Type<Functor>, T>::value)
     };
 };
 
 /* End of traits functions */
 
-
 // Value is a wrapper of a data structure which could contain <void> type.
 // AsyncFuture does not use QVariant because it needs user to register before use.
-template <typename R>
-class Value {
+template<typename R>
+class Value
+{
 public:
-    Value() {
-    }
+    Value() {}
 
-    Value(R&& v) : value(v){
-    }
+    Value(R&& v)
+        : value(v)
+    {}
 
-    Value(R* v) : value(*v) {
-    }
+    Value(R* v)
+        : value(*v)
+    {}
 
-    Value(QFuture<R> future) {
-        value = future.result();
-    }
-
+    Value(QFuture<R> future) { value = future.result(); }
 
     R value;
 };
 
-template <>
-class Value<void> {
+template<>
+class Value<void>
+{
 public:
-    Value() {
-    }
+    Value() {}
 
-    Value(void*) {
-    }
+    Value(void*) {}
 
-    Value(QFuture<void> future) {
-        Q_UNUSED(future);
-    }
+    Value(QFuture<void> future) { Q_UNUSED(future); }
 };
 
-template <typename F>
-void runInMainThread(F func) {
+template<typename F>
+void runInMainThread(F func)
+{
     QObject tmp;
-    QObject::connect(&tmp, &QObject::destroyed,
-                     QCoreApplication::instance(), std::move(func), Qt::QueuedConnection);
+    QObject::connect(&tmp,
+                     &QObject::destroyed,
+                     QCoreApplication::instance(),
+                     std::move(func),
+                     Qt::QueuedConnection);
 }
 
 /*
@@ -334,28 +337,22 @@ void runInMainThread(F func) {
  * @param contextObject Determine the receiver callback
  */
 
-template <typename T, typename Finished, typename Canceled>
-void watch(QFuture<T> future,
-           QObject* owner,
-           QObject* contextObject,
-           Finished finished,
-           Canceled canceled) {
-
+template<typename T, typename Finished, typename Canceled>
+void watch(
+    QFuture<T> future, QObject* owner, QObject* contextObject, Finished finished, Canceled canceled)
+{
     Q_ASSERT(owner);
     QPointer<QObject> ownerAlive = owner;
 
-    QFutureWatcher<T> *watcher = new QFutureWatcher<T>();
+    QFutureWatcher<T>* watcher = new QFutureWatcher<T>();
 
     if (owner) {
         // Don't set parent as the context object as it may live in different thread
-        QObject::connect(owner, &QObject::destroyed,
-                         watcher, &QObject::deleteLater);
+        QObject::connect(owner, &QObject::destroyed, watcher, &QObject::deleteLater);
     }
 
     if (contextObject) {
-
-        QObject::connect(watcher, &QFutureWatcher<T>::finished,
-                         contextObject, [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::finished, contextObject, [=]() {
             delete watcher;
             if (ownerAlive.isNull()) {
                 return;
@@ -363,8 +360,7 @@ void watch(QFuture<T> future,
             finished();
         });
 
-        QObject::connect(watcher, &QFutureWatcher<T>::canceled,
-                         contextObject, [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::canceled, contextObject, [=]() {
             delete watcher;
             if (ownerAlive.isNull()) {
                 return;
@@ -373,9 +369,7 @@ void watch(QFuture<T> future,
         });
 
     } else {
-
-        QObject::connect(watcher, &QFutureWatcher<T>::finished,
-                         [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::finished, [=]() {
             delete watcher;
             if (ownerAlive.isNull()) {
                 return;
@@ -383,8 +377,7 @@ void watch(QFuture<T> future,
             finished();
         });
 
-        QObject::connect(watcher, &QFutureWatcher<T>::canceled,
-                         [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::canceled, [=]() {
             delete watcher;
             if (ownerAlive.isNull()) {
                 return;
@@ -393,8 +386,8 @@ void watch(QFuture<T> future,
         });
     }
 
-    if ((QThread::currentThread() != QCoreApplication::instance()->thread()) &&
-         (contextObject == 0 || QThread::currentThread() != contextObject->thread())) {
+    if ((QThread::currentThread() != QCoreApplication::instance()->thread())
+        && (contextObject == 0 || QThread::currentThread() != contextObject->thread())) {
         // Move watcher to main thread if context object is not set.
         watcher->moveToThread(QCoreApplication::instance()->thread());
     }
@@ -410,20 +403,19 @@ void watch(QFuture<T> future,
  *
  */
 
-template <typename T>
-class DeferredFuture : public QObject, public QFutureInterface<T>{
+template<typename T>
+class DeferredFuture : public QObject, public QFutureInterface<T>
+{
 public:
+    ~DeferredFuture() { cancel(); }
 
-    ~DeferredFuture() {
-        cancel();
-    }
-
-    template <typename ANY>
-    void track(QFuture<ANY> future) {
+    template<typename ANY>
+    void track(QFuture<ANY> future)
+    {
         QPointer<DeferredFuture<T>> thiz = this;
-        QFutureWatcher<ANY> *watcher = new QFutureWatcher<ANY>();
+        QFutureWatcher<ANY>* watcher = new QFutureWatcher<ANY>();
 
-        if ((QThread::currentThread() != QCoreApplication::instance()->thread())) {
+        if (QThread::currentThread() != QCoreApplication::instance()->thread()) {
             watcher->moveToThread(QCoreApplication::instance()->thread());
         }
 
@@ -439,22 +431,25 @@ public:
             thiz->setProgressValue(value);
         });
 
-        QObject::connect(watcher, &QFutureWatcher<ANY>::progressRangeChanged, this, [=](int min, int max) {
-            if (thiz.isNull()) {
-                return;
-            }
-            thiz->setProgressRange(min, max);
-        });
+        QObject::connect(watcher,
+                         &QFutureWatcher<ANY>::progressRangeChanged,
+                         this,
+                         [=](int min, int max) {
+                             if (thiz.isNull()) {
+                                 return;
+                             }
+                             thiz->setProgressRange(min, max);
+                         });
 
-        QObject::connect(watcher, &QFutureWatcher<ANY>::started, this, [=](){
+        QObject::connect(watcher, &QFutureWatcher<ANY>::started, this, [=]() {
             thiz->reportStarted();
         });
 
-        QObject::connect(watcher, &QFutureWatcher<ANY>::paused, this, [=](){
+        QObject::connect(watcher, &QFutureWatcher<ANY>::paused, this, [=]() {
             thiz->setPaused(true);
         });
 
-        QObject::connect(watcher, &QFutureWatcher<ANY>::resumed, this, [=](){
+        QObject::connect(watcher, &QFutureWatcher<ANY>::resumed, this, [=]() {
             thiz->setPaused(false);
         });
 
@@ -472,20 +467,20 @@ public:
         }
     }
 
-    bool isFinished() const {
-        return QFutureInterface<T>::isFinished();
-    }
+    bool isFinished() const { return QFutureInterface<T>::isFinished(); }
 
     // complete<void>()
-    void complete() {
+    void complete()
+    {
         if (isFinished()) {
             return;
         }
         QFutureInterface<T>::reportFinished();
     }
 
-    template <typename R>
-    void complete(R value) {
+    template<typename R>
+    void complete(R value)
+    {
         if (isFinished()) {
             return;
         }
@@ -493,8 +488,9 @@ public:
         QFutureInterface<T>::reportFinished();
     }
 
-    template <typename R>
-    void complete(QList<R>& value) {
+    template<typename R>
+    void complete(QList<R>& value)
+    {
         if (isFinished()) {
             return;
         }
@@ -503,17 +499,20 @@ public:
         QFutureInterface<T>::reportFinished();
     }
 
-    template <typename R>
-    void complete(Value<R> value) {
+    template<typename R>
+    void complete(Value<R> value)
+    {
         this->complete(value.value);
     }
 
-    void complete(Value<void> value) {
+    void complete(Value<void> value)
+    {
         Q_UNUSED(value);
         this->complete();
     }
 
-    void complete(QFuture<T> future) {
+    void complete(QFuture<T> future)
+    {
         incWeakRefCount();
         auto onFinished = [=]() {
             this->completeByFinishedFuture<T>(future);
@@ -525,17 +524,14 @@ public:
             this->decWeakRefCount();
         };
 
-        watch(future,
-              this,
-              nullptr,
-              onFinished,
-              onCanceled);
+        watch(future, this, nullptr, onFinished, onCanceled);
 
         track(future);
     }
 
-    template <typename ANY>
-    void complete(QFuture<QFuture<ANY>> future) {
+    template<typename ANY>
+    void complete(QFuture<QFuture<ANY>> future)
+    {
         incWeakRefCount();
 
         auto onFinished = [=]() {
@@ -548,15 +544,12 @@ public:
             this->decWeakRefCount();
         };
 
-        watch(future,
-              this,
-              0,
-              onFinished,
-              onCanceled);
+        watch(future, this, 0, onFinished, onCanceled);
         // It don't track for the first level of future
     }
 
-    void cancel() {
+    void cancel()
+    {
         if (isFinished()) {
             return;
         }
@@ -564,42 +557,39 @@ public:
         QFutureInterface<T>::reportFinished();
     }
 
-    template <typename Member>
-    void cancel(QObject* sender, Member member) {
+    template<typename Member>
+    void cancel(QObject* sender, Member member)
+    {
         incWeakRefCount();
-        QObject::connect(sender, member,
-                         this, [=]() {
+        QObject::connect(sender, member, this, [=]() {
             this->cancel();
             decWeakRefCount();
         });
     }
 
-    template <typename ANY>
-    void cancel(QFuture<ANY> future) {
+    template<typename ANY>
+    void cancel(QFuture<ANY> future)
+    {
         incWeakRefCount();
         auto onFinished = [=]() {
             cancel();
             decWeakRefCount();
         };
 
-        auto onCanceled = [=]() {
-            decWeakRefCount();
-        };
+        auto onCanceled = [=]() { decWeakRefCount(); };
 
-        watch(future,
-              this,
-              0,
-              onFinished,
-              onCanceled);
+        watch(future, this, 0, onFinished, onCanceled);
     }
 
-    void incWeakRefCount() {
+    void incWeakRefCount()
+    {
         mutex.lock();
         refCount++;
         mutex.unlock();
     }
 
-    void decWeakRefCount() {
+    void decWeakRefCount()
+    {
         int count;
 
         mutex.lock();
@@ -618,63 +608,66 @@ public:
         }
     }
 
-    void incStrongRef() {
+    void incStrongRef()
+    {
         mutex.lock();
         strongRefCount++;
         mutex.unlock();
     }
 
-    void decStrongRef() {
+    void decStrongRef()
+    {
         mutex.lock();
         strongRefCount--;
         mutex.unlock();
     }
 
     /// Create a DeferredFugture instance and manage by a shared pointer
-    static QSharedPointer<DeferredFuture<T> > create() {
-
-        auto deleter = [](DeferredFuture<T> *object) {
+    static QSharedPointer<DeferredFuture<T>> create()
+    {
+        auto deleter = [](DeferredFuture<T>* object) {
             object->decStrongRef();
             object->decWeakRefCount();
         };
 
-        QSharedPointer<DeferredFuture<T> > ptr(new DeferredFuture<T>(), deleter);
+        QSharedPointer<DeferredFuture<T>> ptr(new DeferredFuture<T>(), deleter);
         ptr->incStrongRef();
         return ptr;
     }
 
-    template <typename R>
-    void reportResult(R& value, int index = -1) {
+    template<typename R>
+    void reportResult(R& value, int index = -1)
+    {
         QFutureInterface<T>::reportResult(value, index);
     }
 
-    void reportResult(Value<void> &value) {
-        Q_UNUSED(value);
-    }
+    void reportResult(Value<void>& value) { Q_UNUSED(value); }
 
-    template <typename R>
-    void reportResult(QList<R>& value) {
-        for (int i = 0 ; i < value.size();i++) {
+    template<typename R>
+    void reportResult(QList<R>& value)
+    {
+        for (int i = 0; i < value.size(); i++) {
             QFutureInterface<T>::reportResult(value[i], i);
         }
     }
 
-    template <typename R>
-    void reportResult(Value<R>& value) {
+    template<typename R>
+    void reportResult(Value<R>& value)
+    {
         QFutureInterface<T>::reportResult(value.value);
     }
 
 protected:
-    DeferredFuture(QObject* parent = nullptr): QObject(parent),
-                                         QFutureInterface<T>(QFutureInterface<T>::Running),
-                                         refCount(1),
-                                         strongRefCount(0) {
-    }
+    DeferredFuture(QObject* parent = nullptr)
+        : QObject(parent)
+        , QFutureInterface<T>(QFutureInterface<T>::Running)
+        , refCount(1)
+        , strongRefCount(0)
+    {}
 
     QMutex mutex;
 
 private:
-
     // A reference count system. If it is dropped to zero, it will cancel this object
     int refCount;
 
@@ -682,9 +675,10 @@ private:
     int strongRefCount;
 
     /// The future is already finished. It will take effect immediately
-    template <typename ANY>
-    typename std::enable_if<!std::is_same<ANY,void>::value, void>::type
-    completeByFinishedFuture(QFuture<T> future) {
+    template<typename ANY>
+    typename std::enable_if<!std::is_same<ANY, void>::value, void>::type completeByFinishedFuture(
+        QFuture<T> future)
+    {
         if (future.resultCount() > 1) {
             complete(future.results());
         } else if (future.resultCount() == 1) {
@@ -694,9 +688,10 @@ private:
         }
     }
 
-    template <typename ANY>
-    typename std::enable_if<std::is_same<ANY,void>::value, void>::type
-    completeByFinishedFuture(QFuture<T> future) {
+    template<typename ANY>
+    typename std::enable_if<std::is_same<ANY, void>::value, void>::type completeByFinishedFuture(
+        QFuture<T> future)
+    {
         Q_UNUSED(future);
         complete();
     }
@@ -704,16 +699,21 @@ private:
 protected:
 };
 
-class CombinedFuture: public DeferredFuture<void> {
+class CombinedFuture : public DeferredFuture<void>
+{
 public:
-    CombinedFuture(bool settleAllModeArg = false) : DeferredFuture<void>(), settleAllMode(settleAllModeArg) {
+    CombinedFuture(bool settleAllModeArg = false)
+        : DeferredFuture<void>()
+        , settleAllMode(settleAllModeArg)
+    {
         settledCount = 0;
         count = 0;
         anyCanceled = false;
     }
 
-    template <typename T>
-    void addFuture(const QFuture<T> future) {
+    template<typename T>
+    void addFuture(const QFuture<T> future)
+    {
         if (isFinished()) {
             return;
         }
@@ -725,19 +725,23 @@ public:
         QFutureInterface<void>::setProgressRange(0, count);
         mutex.unlock();
 
-        Private::watch(future, this, 0,
-                       [=]() {
-            completeFutureAt(index);
-            decWeakRefCount();
-        },[=]() {
-            cancelFutureAt(index);
-            decWeakRefCount();
-        });
+        Private::watch(
+            future,
+            this,
+            0,
+            [=]() {
+                completeFutureAt(index);
+                decWeakRefCount();
+            },
+            [=]() {
+                cancelFutureAt(index);
+                decWeakRefCount();
+            });
     }
 
-    static QSharedPointer<CombinedFuture> create(bool settleAllMode) {
-
-        auto deleter = [](CombinedFuture *object) {
+    static QSharedPointer<CombinedFuture> create(bool settleAllMode)
+    {
+        auto deleter = [](CombinedFuture* object) {
             // Regardless of the no. of instance of QSharedPointer<CombinedFuture>,
             // it only increase the reference by one.
             object->decStrongRef();
@@ -755,7 +759,8 @@ private:
     bool anyCanceled;
     bool settleAllMode;
 
-    void completeFutureAt(int index) {
+    void completeFutureAt(int index)
+    {
         Q_UNUSED(index);
         mutex.lock();
         settledCount++;
@@ -764,7 +769,8 @@ private:
         checkFulfilled();
     }
 
-    void cancelFutureAt(int index) {
+    void cancelFutureAt(int index)
+    {
         Q_UNUSED(index);
 
         mutex.lock();
@@ -776,7 +782,8 @@ private:
         checkFulfilled();
     }
 
-    void checkFulfilled() {
+    void checkFulfilled()
+    {
         if (isFinished()) {
             return;
         }
@@ -794,23 +801,25 @@ private:
             }
         }
     }
-
 };
 
 /// Proxy is a proxy class to connect a QObject signal to a callback function
-template <typename ARG>
-class Proxy : public QObject {
+template<typename ARG>
+class Proxy : public QObject
+{
 public:
-    Proxy(QObject* parent) : QObject(parent) {
-    }
+    Proxy(QObject* parent)
+        : QObject(parent)
+    {}
 
     QVector<int> parameterTypes;
     std::function<void(Value<ARG>)> callback;
     QMetaObject::Connection conn;
     QPointer<QObject> sender;
 
-    template <typename Method>
-    void bind(QObject* source, Method pointToMemberFunction) {
+    template<typename Method>
+    void bind(QObject* source, Method pointToMemberFunction)
+    {
         sender = source;
 
         const int memberOffset = QObject::staticMetaObject.methodCount();
@@ -819,18 +828,24 @@ public:
 
         parameterTypes = QVector<int>(method.parameterCount());
 
-        for (int i = 0 ; i < method.parameterCount() ; i++) {
+        for (int i = 0; i < method.parameterCount(); i++) {
             parameterTypes[i] = method.parameterType(i);
         }
 
-        conn = QMetaObject::connect(source, method.methodIndex(), this, memberOffset, Qt::QueuedConnection, 0);
+        conn = QMetaObject::connect(source,
+                                    method.methodIndex(),
+                                    this,
+                                    memberOffset,
+                                    Qt::QueuedConnection,
+                                    0);
 
         if (!conn) {
             qWarning() << "AsyncFuture::Private::Proxy: Failed to bind signal";
         }
     }
 
-    int qt_metacall(QMetaObject::Call _c, int _id, void **_a) {
+    int qt_metacall(QMetaObject::Call _c, int _id, void** _a)
+    {
         int methodId = QObject::qt_metacall(_c, _id, _a);
 
         if (methodId < 0) {
@@ -854,21 +869,24 @@ public:
 };
 
 /// To bind a signal in const char* to callback
-class Proxy2 : public QObject {
+class Proxy2 : public QObject
+{
 public:
-    inline Proxy2(QObject* parent) : QObject(parent) {
-    }
+    inline Proxy2(QObject* parent)
+        : QObject(parent)
+    {}
 
     QVector<int> parameterTypes;
     std::function<void(QVariant)> callback;
     QMetaObject::Connection conn;
     QPointer<QObject> sender;
 
-    inline bool bind(QObject* source,QString signal) {
+    inline bool bind(QObject* source, QString signal)
+    {
         sender = source;
-
+        QRegularExpression _regex("^[0-9]*");
         // Remove leading number
-        signal = signal.replace(QRegExp("^[0-9]*"), "");
+        signal = signal.replace(_regex, "");
 
         const int memberOffset = QObject::staticMetaObject.methodCount();
 
@@ -883,11 +901,16 @@ public:
 
         parameterTypes = QVector<int>(method.parameterCount());
 
-        for (int i = 0 ; i < method.parameterCount() ; i++) {
+        for (int i = 0; i < method.parameterCount(); i++) {
             parameterTypes[i] = method.parameterType(i);
         }
 
-        conn = QMetaObject::connect(source, method.methodIndex(), this, memberOffset, Qt::QueuedConnection, 0);
+        conn = QMetaObject::connect(source,
+                                    method.methodIndex(),
+                                    this,
+                                    memberOffset,
+                                    Qt::QueuedConnection,
+                                    0);
 
         if (!conn) {
             qWarning() << "AsyncFuture::Private::Proxy: Failed to bind signal";
@@ -896,7 +919,8 @@ public:
         return true;
     }
 
-    inline int qt_metacall(QMetaObject::Call _c, int _id, void **_a) {
+    inline int qt_metacall(QMetaObject::Call _c, int _id, void** _a)
+    {
         int methodId = QObject::qt_metacall(_c, _id, _a);
 
         if (methodId < 0) {
@@ -912,9 +936,9 @@ public:
                     const QMetaType::Type type = static_cast<QMetaType::Type>(parameterTypes.at(0));
 
                     if (type == QMetaType::QVariant) {
-                        v = *reinterpret_cast<QVariant *>(_a[1]);
+                        v = *reinterpret_cast<QVariant*>(_a[1]);
                     } else {
-                        v = QVariant(type, _a[1]);
+                        v = QVariant::fromValue(_a[1]);
                     }
                 }
                 callback(v);
@@ -922,20 +946,21 @@ public:
         }
         return methodId;
     }
-
 };
 
 /* call() : Run functor(future):void */
 
-template <typename Functor, typename T>
-typename std::enable_if<is_callable<Functor, T>::value, void>::type
-callIgnoreReturn(Functor& functor, QFuture<T>& future) {
+template<typename Functor, typename T>
+typename std::enable_if<is_callable<Functor, T>::value, void>::type callIgnoreReturn(
+    Functor& functor, QFuture<T>& future)
+{
     functor(future);
 }
 
-template <typename Functor, typename T>
-typename std::enable_if<!is_callable<Functor, T>::value, void>::type
-callIgnoreReturn(Functor& functor, QFuture<T>& future) {
+template<typename Functor, typename T>
+typename std::enable_if<!is_callable<Functor, T>::value, void>::type callIgnoreReturn(
+    Functor& functor, QFuture<T>& future)
+{
     Q_UNUSED(functor);
     Q_UNUSED(future);
     /* Unlike clang, VC 2017 may not instantiate this function if another
@@ -944,15 +969,17 @@ callIgnoreReturn(Functor& functor, QFuture<T>& future) {
     static_assert(False<T>::value, ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED);
 }
 
-template <typename Functor, typename T>
-typename std::enable_if<is_callable<Functor, T>::value, RetType<Functor>>::type
-call(Functor& functor, QFuture<T>& future) {
+template<typename Functor, typename T>
+typename std::enable_if<is_callable<Functor, T>::value, RetType<Functor>>::type call(
+    Functor& functor, QFuture<T>& future)
+{
     return functor(future);
 }
 
-template <typename Functor, typename T>
-typename std::enable_if<!is_callable<Functor, T>::value, RetType<Functor>>::type
-call(Functor& functor, QFuture<T>& future) {
+template<typename Functor, typename T>
+typename std::enable_if<!is_callable<Functor, T>::value, RetType<Functor>>::type call(
+    Functor& functor, QFuture<T>& future)
+{
     Q_UNUSED(functor);
     Q_UNUSED(future);
     static_assert(False<T>::value, ASYNCFUTURE_ERROR_ARGUMENT_MISMATCHED);
@@ -960,36 +987,40 @@ call(Functor& functor, QFuture<T>& future) {
 
 /* eval() : Evaluate the expression - "return functor(future)" that may have a void return type */
 
-template <typename Functor, typename T>
+template<typename Functor, typename T>
 typename std::enable_if<ret_type_is_void<Functor>::value && arg_count_is_zero<Functor>::value,
-Value<RetType<Functor>>>::type
-eval(Functor functor, QFuture<T> future) {
+                        Value<RetType<Functor>>>::type
+eval(Functor functor, QFuture<T> future)
+{
     Q_UNUSED(future);
     functor();
     return Value<void>();
 }
 
-template <typename Functor, typename T>
+template<typename Functor, typename T>
 typename std::enable_if<ret_type_is_void<Functor>::value && !arg_count_is_zero<Functor>::value,
-Value<RetType<Functor>>>::type
-eval(Functor functor, QFuture<T> future) {
+                        Value<RetType<Functor>>>::type
+eval(Functor functor, QFuture<T> future)
+{
     // callIgnoreReturn() is designed to reduce the no. of annoying compiler error messages.
     callIgnoreReturn(functor, future);
     return Value<void>();
 }
 
-template <typename Functor, typename T>
+template<typename Functor, typename T>
 typename std::enable_if<!ret_type_is_void<Functor>::value && arg_count_is_zero<Functor>::value,
-Value<RetType<Functor>>>::type
-eval(Functor functor, QFuture<T> future) {
+                        Value<RetType<Functor>>>::type
+eval(Functor functor, QFuture<T> future)
+{
     Q_UNUSED(future);
     return functor();
 }
 
-template <typename Functor, typename T>
+template<typename Functor, typename T>
 typename std::enable_if<!ret_type_is_void<Functor>::value && !arg_count_is_zero<Functor>::value,
-Value<RetType<Functor>>>::type
-eval(Functor functor, QFuture<T> future) {
+                        Value<RetType<Functor>>>::type
+eval(Functor functor, QFuture<T> future)
+{
     return call(functor, future);
 }
 
@@ -1000,28 +1031,34 @@ eval(Functor functor, QFuture<T> future) {
  * DeferredType and RetType can be different.
  * e.g DeferredFuture<int> = Value<QFuture<int>>
  */
-template <typename DeferredType, typename RetType, typename T, typename Completed, typename Canceled>
-static QFuture<DeferredType> execute(QFuture<T> future, QObject* contextObject, Completed onCompleted, Canceled onCanceled) {
-
+template<typename DeferredType, typename RetType, typename T, typename Completed, typename Canceled>
+static QFuture<DeferredType> execute(QFuture<T> future,
+                                     QObject* contextObject,
+                                     Completed onCompleted,
+                                     Canceled onCanceled)
+{
     auto defer = DeferredFuture<DeferredType>::create();
 
-    watch(future,
-          contextObject,
-          contextObject,[=]() {
-        try {
-            Value<RetType> value = eval(onCompleted, future);
-            defer->complete(value);
-        } catch (QException& e) {
-            defer->reportException(e);
+    watch(
+        future,
+        contextObject,
+        contextObject,
+        [=]() {
+            try {
+                Value<RetType> value = eval(onCompleted, future);
+                defer->complete(value);
+            } catch (QException& e) {
+                defer->reportException(e);
+                defer->cancel();
+            } catch (...) {
+                defer->reportException(QUnhandledException());
+                defer->cancel();
+            }
+        },
+        [=]() {
+            onCanceled();
             defer->cancel();
-        } catch (...) {
-            defer->reportException(QUnhandledException());
-            defer->cancel();
-        }
-    }, [=]() {
-        onCanceled();
-        defer->cancel();
-    });
+        });
 
     if (contextObject) {
         defer->cancel(contextObject, &QObject::destroyed);
@@ -1030,152 +1067,151 @@ static QFuture<DeferredType> execute(QFuture<T> future, QObject* contextObject, 
     return defer->future();
 }
 
-} // End of Private Namespace
+} // namespace Private
 
 /* Start of AsyncFuture Namespace */
 
-template <typename T>
+template<typename T>
 class Deferred;
 
-template <typename T>
-class Observable {
+template<typename T>
+class Observable
+{
 protected:
     QFuture<T> m_future;
 
 public:
+    Observable() {}
 
-    Observable() {
+    Observable(QFuture<T> future) { m_future = future; }
 
-    }
+    QFuture<T> future() const { return m_future; }
 
-    Observable(QFuture<T> future) {
-        m_future = future;
-    }
-
-    QFuture<T> future() const {
-        return m_future;
-    }
-
-    template <typename Completed>
-    typename std::enable_if< !Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
-    Observable<typename Private::function_traits<Completed>::result_type>
-    >::type
-    context(QObject* contextObject, Completed functor)  {
+    template<typename Completed>
+    typename std::enable_if<
+        !Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
+        Observable<typename Private::function_traits<Completed>::result_type>>::type
+    context(QObject* contextObject, Completed functor)
+    {
         /* functor return non-QFuture type */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
 
         return _context<typename Private::function_traits<Completed>::result_type,
-                       typename Private::function_traits<Completed>::result_type
-                >(contextObject, functor);
+                        typename Private::function_traits<Completed>::result_type>(contextObject,
+                                                                                   functor);
     }
 
-    template <typename Completed>
-    typename std::enable_if< Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
-    Observable<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type>
-    >::type
-    context(QObject* contextObject, Completed functor)  {
+    template<typename Completed>
+    typename std::enable_if<
+        Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
+        Observable<typename Private::future_traits<
+            typename Private::function_traits<Completed>::result_type>::arg_type>>::type
+    context(QObject* contextObject, Completed functor)
+    {
         /* functor returns a QFuture */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
 
-        return _context<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type,
-                       typename Private::function_traits<Completed>::result_type
-                >(contextObject, functor);
+        return _context<typename Private::future_traits<
+                            typename Private::function_traits<Completed>::result_type>::arg_type,
+                        typename Private::function_traits<Completed>::result_type>(contextObject,
+                                                                                   functor);
     }
 
     /* subscribe function */
 
-    template <typename Completed, typename Canceled>
+    template<typename Completed, typename Canceled>
     typename std::enable_if<!Private::ret_type_is_future<Completed>::value,
-    Observable<typename Private::RetType<Completed>>
-    >::type
-    subscribe(Completed onCompleted,
-              Canceled onCanceled) {
+                            Observable<typename Private::RetType<Completed>>>::type
+    subscribe(Completed onCompleted, Canceled onCanceled)
+    {
         /* For functor return a regular value */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("subscribe(callback): ", Completed);
 
         return _subscribe<typename Private::function_traits<Completed>::result_type,
-                         typename Private::function_traits<Completed>::result_type
-                >(onCompleted, onCanceled);
+                          typename Private::function_traits<Completed>::result_type>(onCompleted,
+                                                                                     onCanceled);
     }
 
-    template <typename Completed>
+    template<typename Completed>
     typename std::enable_if<!Private::ret_type_is_future<Completed>::value,
-    Observable<typename Private::RetType<Completed>>
-    >::type
-    subscribe(Completed onCompleted) {
+                            Observable<typename Private::RetType<Completed>>>::type
+    subscribe(Completed onCompleted)
+    {
         /* For functor return a regular value and onCanceled is missed */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("subscribe(callback): ", Completed);
 
         return _subscribe<typename Private::function_traits<Completed>::result_type,
-                         typename Private::function_traits<Completed>::result_type
-                >(onCompleted, [](){});
+                          typename Private::function_traits<Completed>::result_type>(onCompleted,
+                                                                                     []() {});
     }
 
-    template <typename Completed, typename Canceled>
-    typename std::enable_if<Private::ret_type_is_future<Completed>::value,
-    Observable<typename Private::function_traits<Completed>::future_arg_type>
-    >::type
-    subscribe(Completed onCompleted,
-              Canceled onCanceled) {
+    template<typename Completed, typename Canceled>
+    typename std::enable_if<
+        Private::ret_type_is_future<Completed>::value,
+        Observable<typename Private::function_traits<Completed>::future_arg_type>>::type
+    subscribe(Completed onCompleted, Canceled onCanceled)
+    {
         /* onCompleted returns a QFuture */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("subscribe(callback): ", Completed);
 
-        return _subscribe<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type,
-                         typename Private::function_traits<Completed>::result_type
-                >(onCompleted, onCanceled);
+        return _subscribe<typename Private::future_traits<
+                              typename Private::function_traits<Completed>::result_type>::arg_type,
+                          typename Private::function_traits<Completed>::result_type>(onCompleted,
+                                                                                     onCanceled);
     }
 
-    template <typename Completed>
-    typename std::enable_if<Private::ret_type_is_future<Completed>::value,
-    Observable<typename Private::function_traits<Completed>::future_arg_type>
-    >::type
-    subscribe(Completed onCompleted) {
+    template<typename Completed>
+    typename std::enable_if<
+        Private::ret_type_is_future<Completed>::value,
+        Observable<typename Private::function_traits<Completed>::future_arg_type>>::type
+    subscribe(Completed onCompleted)
+    {
         /* onCompleted returns a QFuture and no onCanceled given */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("subscribe(callback): ", Completed);
 
-        return _subscribe<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type,
-                         typename Private::function_traits<Completed>::result_type
-                >(onCompleted, [](){});
+        return _subscribe<typename Private::future_traits<
+                              typename Private::function_traits<Completed>::result_type>::arg_type,
+                          typename Private::function_traits<Completed>::result_type>(onCompleted,
+                                                                                     []() {});
     }
 
     /* end of subscribe function */
 
-    template <typename Functor>
+    template<typename Functor>
     typename std::enable_if<std::is_same<typename Private::RetType<Functor>, void>::value, void>::type
-    onProgress(Functor functor) {
+    onProgress(Functor functor)
+    {
         onProgress([=]() mutable {
             functor();
             return true;
         });
     }
 
-    template <typename Functor>
-    typename std::enable_if<std::is_same<typename Private::RetType<Functor>,bool>::value, void>::type
-    onProgress(Functor onProgressArg) {
-        QFutureWatcher<T> *watcher = new QFutureWatcher<T>();
+    template<typename Functor>
+    typename std::enable_if<std::is_same<typename Private::RetType<Functor>, bool>::value, void>::type
+    onProgress(Functor onProgressArg)
+    {
+        QFutureWatcher<T>* watcher = new QFutureWatcher<T>();
 
         auto wrapper = [=]() mutable {
-
             if (!onProgressArg()) {
                 watcher->disconnect();
                 watcher->deleteLater();
             }
         };
 
-        QObject::connect(watcher, &QFutureWatcher<T>::finished,
-                         [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::finished, [=]() {
             watcher->disconnect();
             watcher->deleteLater();
         });
 
-        QObject::connect(watcher, &QFutureWatcher<T>::canceled,
-                         [=]() {
+        QObject::connect(watcher, &QFutureWatcher<T>::canceled, [=]() {
             watcher->disconnect();
             watcher->deleteLater();
         });
@@ -1191,229 +1227,231 @@ public:
         watcher->setFuture(m_future);
     }
 
-
-    void onCompleted(std::function<void()> func) {
+    void onCompleted(std::function<void()> func)
+    {
         subscribe(func, []() {});
     }
 
-    void onCanceled(std::function<void()> func) {
+    void onCanceled(std::function<void()> func)
+    {
         subscribe([]() {}, func);
     }
 
-    void onFinished(std::function<void()> func) {
+    void onFinished(std::function<void()> func)
+    {
         auto runOnMainThread = [=]() {
 #if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
-
-        QObject tmp;
-        QObject::connect(&tmp, &QObject::destroyed, QCoreApplication::instance(), func, Qt::QueuedConnection);
+            QObject tmp;
+            QObject::connect(&tmp,
+                             &QObject::destroyed,
+                             QCoreApplication::instance(),
+                             func,
+                             Qt::QueuedConnection);
 #else
-        QMetaObject::invokeMethod(QCoreApplication::instance(), func, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(QCoreApplication::instance(), func, Qt::QueuedConnection);
 #endif
         };
 
         subscribe(runOnMainThread, runOnMainThread);
     }
 
-    template <typename ANY>
-    void onCanceled(Deferred<ANY> object) {
-        subscribe([]() {}, [=]() {
-            auto o = object;
-            o.cancel();
-        });
+    template<typename ANY>
+    void onCanceled(Deferred<ANY> object)
+    {
+        subscribe([]() {},
+                  [=]() {
+                      auto o = object;
+                      o.cancel();
+                  });
     }
 
-    template <typename ANY>
-    void onCanceled(QFuture<ANY> future) {
-        subscribe([]() {}, [=]() {
-            auto f = future;
-            f.cancel();
-        });
+    template<typename ANY>
+    void onCanceled(QFuture<ANY> future)
+    {
+        subscribe([]() {},
+                  [=]() {
+                      auto f = future;
+                      f.cancel();
+                  });
     }
 
 private:
-    template <typename ObservableType, typename RetType, typename Completed>
-    Observable<ObservableType> _context(QObject* contextObject, Completed functor)  {
-
+    template<typename ObservableType, typename RetType, typename Completed>
+    Observable<ObservableType> _context(QObject* contextObject, Completed functor)
+    {
         auto future = Private::execute<ObservableType, RetType>(m_future,
-                                                               contextObject,
-                                                               functor,
-                                                               [](){});
+                                                                contextObject,
+                                                                functor,
+                                                                []() {});
 
         return Observable<ObservableType>(future);
     }
 
-    template <typename ObservableType, typename RetType, typename Completed, typename Canceled>
-    Observable<ObservableType> _subscribe(Completed onCompleted, Canceled onCanceled) {       
-
+    template<typename ObservableType, typename RetType, typename Completed, typename Canceled>
+    Observable<ObservableType> _subscribe(Completed onCompleted, Canceled onCanceled)
+    {
         auto future = Private::execute<ObservableType, RetType>(m_future,
-                                                               QCoreApplication::instance(),
-                                                               onCompleted,
-                                                               onCanceled);
+                                                                QCoreApplication::instance(),
+                                                                onCompleted,
+                                                                onCanceled);
 
         return Observable<ObservableType>(future);
     }
-
 };
 
-template <typename T>
-class Deferred : public Observable<T> {
-
+template<typename T>
+class Deferred : public Observable<T>
+{
 public:
-    Deferred() : Observable<T>(),
-              deferredFuture(Private::DeferredFuture<T>::create())  {
+    Deferred()
+        : Observable<T>()
+        , deferredFuture(Private::DeferredFuture<T>::create())
+    {
         this->m_future = deferredFuture->future();
     }
 
-    void complete(QFuture<QFuture<T>> future) {
-        deferredFuture->complete(future);
-    }
+    void complete(QFuture<QFuture<T>> future) { deferredFuture->complete(future); }
 
-    void complete(QFuture<T> future) {
-        deferredFuture->complete(future);
-    }
+    void complete(QFuture<T> future) { deferredFuture->complete(future); }
 
-    void complete(T value)
+    void complete(T value) { deferredFuture->complete(value); }
+
+    void complete(QList<T> value) { deferredFuture->complete(value); }
+
+    template<typename ANY>
+    void cancel(QFuture<ANY> future)
     {
-        deferredFuture->complete(value);
-    }
-
-    void complete(QList<T> value) {
-        deferredFuture->complete(value);
-    }
-
-    template <typename ANY>
-    void cancel(QFuture<ANY> future) {
         deferredFuture->cancel(future);
     }
 
-    void cancel() {
-        deferredFuture->cancel();
-    }
+    void cancel() { deferredFuture->cancel(); }
 
-    template <typename ANY>
-    void track(QFuture<ANY> future) {
+    template<typename ANY>
+    void track(QFuture<ANY> future)
+    {
         deferredFuture->track(future);
     }
 
-    void setProgressValue(int value) {
-        deferredFuture->setProgressValue(value);
-    }
+    void setProgressValue(int value) { deferredFuture->setProgressValue(value); }
 
-    void setProgressRange(int minimum, int maximum) {
+    void setProgressRange(int minimum, int maximum)
+    {
         deferredFuture->setProgressRange(minimum, maximum);
     }
 
-    void reportStarted() {
-        deferredFuture->reportStarted();
-    }
+    void reportStarted() { deferredFuture->reportStarted(); }
 
 protected:
-    QSharedPointer<Private::DeferredFuture<T> > deferredFuture;
+    QSharedPointer<Private::DeferredFuture<T>> deferredFuture;
 };
 
 template<>
-class Deferred<void> : public Observable<void> {
-
+class Deferred<void> : public Observable<void>
+{
 public:
-    Deferred() : Observable<void>(),
-              deferredFuture(Private::DeferredFuture<void>::create())  {
+    Deferred()
+        : Observable<void>()
+        , deferredFuture(Private::DeferredFuture<void>::create())
+    {
         this->m_future = deferredFuture->future();
     }
 
-    template <typename ANY>
-    void complete(QFuture<QFuture<ANY>> future) {
+    template<typename ANY>
+    void complete(QFuture<QFuture<ANY>> future)
+    {
         Q_UNUSED(future);
 
-        static_assert(Private::False<ANY>::value, "Deferred<void>::complete(QFuture<QFuture<ANY>>) is not supported");
+        static_assert(Private::False<ANY>::value,
+                      "Deferred<void>::complete(QFuture<QFuture<ANY>>) is not supported");
     }
 
-    void complete(QFuture<void> future) {
-        deferredFuture->complete(future);
-    }
+    void complete(QFuture<void> future) { deferredFuture->complete(future); }
 
-    void complete() {
-        deferredFuture->complete();
-    }
+    void complete() { deferredFuture->complete(); }
 
-    template <typename ANY>
-    void cancel(QFuture<ANY> future) {
+    template<typename ANY>
+    void cancel(QFuture<ANY> future)
+    {
         deferredFuture->cancel(future);
     }
 
-    void cancel() {
-        deferredFuture->cancel();
-    }
+    void cancel() { deferredFuture->cancel(); }
 
-    template <typename ANY>
-    void track(QFuture<ANY> future) {
+    template<typename ANY>
+    void track(QFuture<ANY> future)
+    {
         deferredFuture->track(future);
     }
 
-    void reportStarted() {
-        deferredFuture->reportStarted();
-    }
+    void reportStarted() { deferredFuture->reportStarted(); }
 
 protected:
-    QSharedPointer<Private::DeferredFuture<void> > deferredFuture;
+    QSharedPointer<Private::DeferredFuture<void>> deferredFuture;
 };
 
-typedef enum {
-    FailFast,
-    AllSettled
-} CombinatorMode;
+typedef enum { FailFast, AllSettled } CombinatorMode;
 
-class Combinator : public Observable<void> {
+class Combinator : public Observable<void>
+{
 private:
     QSharedPointer<Private::CombinedFuture> combinedFuture;
 
 public:
-    inline Combinator(CombinatorMode mode = FailFast) : Observable<void>() {
+    inline Combinator(CombinatorMode mode = FailFast)
+        : Observable<void>()
+    {
         combinedFuture = Private::CombinedFuture::create(mode == AllSettled);
         m_future = combinedFuture->future();
     }
 
-    inline ~Combinator() {
+    inline ~Combinator()
+    {
         if (!combinedFuture.isNull() && combinedFuture->future().progressMaximum() == 0) {
             // No future added
             combinedFuture->deleteLater();
         }
     }
 
-    template <typename T>
-    Combinator& combine(QFuture<T> future) {
+    template<typename T>
+    Combinator& combine(QFuture<T> future)
+    {
         combinedFuture->addFuture(future);
         return *this;
     }
 
-    template <typename T>
-    Combinator& operator<<(QFuture<T> future) {
+    template<typename T>
+    Combinator& operator<<(QFuture<T> future)
+    {
         combinedFuture->addFuture(future);
         return *this;
     }
 
-    template <typename T>
-    Combinator& operator<<(Deferred<T> deferred) {
+    template<typename T>
+    Combinator& operator<<(Deferred<T> deferred)
+    {
         combinedFuture->addFuture(deferred.future());
         return *this;
     }
 };
 
-template <typename T>
-static Observable<T> observe(QFuture<QFuture<T>> future) {
+template<typename T>
+static Observable<T> observe(QFuture<QFuture<T>> future)
+{
     Deferred<T> defer;
     defer.complete(future);
     return Observable<T>(defer.future());
 }
 
-template <typename T>
-static Observable<T> observe(QFuture<T> future) {
+template<typename T>
+static Observable<T> observe(QFuture<T> future)
+{
     return Observable<T>(future);
 }
 
-template <typename Member>
+template<typename Member>
 auto observe(QObject* object, Member pointToMemberFunction)
--> Observable< typename Private::signal_traits<Member>::result_type> {
-
+    -> Observable<typename Private::signal_traits<Member>::result_type>
+{
     typedef typename Private::signal_traits<Member>::result_type RetType;
 
     auto defer = Private::DeferredFuture<RetType>::create();
@@ -1421,8 +1459,8 @@ auto observe(QObject* object, Member pointToMemberFunction)
     auto proxy = new Private::Proxy<RetType>(nullptr);
 
     QObject::connect(object, &QObject::destroyed, proxy, [=]() {
-       defer->cancel();
-       delete proxy;
+        defer->cancel();
+        delete proxy;
     });
 
     proxy->bind(object, pointToMemberFunction);
@@ -1431,12 +1469,12 @@ auto observe(QObject* object, Member pointToMemberFunction)
         delete proxy;
     };
 
-    Observable< typename Private::signal_traits<Member>::result_type> observer(defer->future());
+    Observable<typename Private::signal_traits<Member>::result_type> observer(defer->future());
     return observer;
 }
 
-inline Observable<QVariant> observe(QObject *object,QString signal)  {
-
+inline Observable<QVariant> observe(QObject* object, QString signal)
+{
     auto defer = Private::DeferredFuture<QVariant>::create();
 
     auto future = defer->future();
@@ -1444,8 +1482,8 @@ inline Observable<QVariant> observe(QObject *object,QString signal)  {
     auto proxy = new Private::Proxy2(nullptr);
 
     QObject::connect(object, &QObject::destroyed, proxy, [=]() {
-       defer->cancel();
-       delete proxy;
+        defer->cancel();
+        delete proxy;
     });
 
     if (proxy->bind(object, signal)) {
@@ -1462,13 +1500,15 @@ inline Observable<QVariant> observe(QObject *object,QString signal)  {
     return observer;
 }
 
-template <typename T>
-auto deferred() -> Deferred<T> {
+template<typename T>
+auto deferred() -> Deferred<T>
+{
     return Deferred<T>();
 }
 
-inline Combinator combine(CombinatorMode mode = FailFast) {
+inline Combinator combine(CombinatorMode mode = FailFast)
+{
     return Combinator(mode);
 }
 
-}
+} // namespace AsyncFuture
